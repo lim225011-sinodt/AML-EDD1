@@ -1,0 +1,19 @@
+# Gitee仓库设置和推送命令
+# 请先在Gitee上创建仓库：https://gitee.com/18911236161/AML-EDD1
+
+# 然后运行以下命令：
+
+cd "d:\git_code\AML-EDD1\AML-EDD1"
+
+# 设置Gitee远程仓库（已配置）
+git remote set-url gitee https://18911236161:84a0b6f170bdf8177ad88a4174715a98@gitee.com/18911236161/AML-EDD1.git
+
+# 推送到Gitee
+git push gitee main
+
+# 或者使用推送脚本
+python push_script.py
+
+# 检查推送结果
+git remote -v
+git status
