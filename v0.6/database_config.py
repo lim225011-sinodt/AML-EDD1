@@ -24,11 +24,11 @@ class DatabaseConfig:
 
     # 生产环境配置（可根据实际环境修改）
     PRODUCTION_CONFIG = {
-        'host': os.environ.get('DB_HOST', 'localhost'),
+        'host': os.environ.get('DB_HOST', '101.42.102.9'),
         'port': int(os.environ.get('DB_PORT', 3306)),
         'user': os.environ.get('DB_USER', 'root'),
-        'password': os.environ.get('DB_PASSWORD', ''),
-        'database': os.environ.get('DB_NAME', 'aml_edd_v06'),
+        'password': os.environ.get('DB_PASSWORD', 'Bancstone123!'),
+        'database': os.environ.get('DB_NAME', 'AML300'),
         'charset': 'utf8mb4'
     }
 

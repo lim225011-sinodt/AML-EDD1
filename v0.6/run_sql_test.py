@@ -97,7 +97,7 @@ def check_mysql_connection():
             conn = mysql.connector.connect(
                 host='localhost',
                 user='root',
-                password='',
+                password='Bancstone123!',
                 charset='utf8mb4'
             )
             cursor = conn.cursor()
