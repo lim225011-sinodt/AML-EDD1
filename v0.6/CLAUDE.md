@@ -10,16 +10,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```
 AML-EDD1/
-├── v0.5/                          # v0.5版本文档目录
-│   ├── no300_interface_document.pdf      # 300号文件接口格式文档
-│   ├── AML_BRD.pdf                        # 反洗钱尽调存证链管理平台业务需求书
-│   ├── 2025year_no10_rules.txt           # 2025年反洗钱10号令内容
-│   ├── AI-EDD-differnt-analysis.pdf      # AI尽职调查存证平台方案与10号文匹配度及需求调研差异分析
-│   ├── bank_edc_document.pdf              # 银行EDC文档
-│   ├── consule_list.xlsx                  # 咨询清单
-│   └── .claude/                           # Claude Code配置
 ├── v0.6/                          # v0.6版本开发目录（当前）
-│   └── AML_BRD.pdf                        # 业务需求文档
+│   ├── CLAUDE.md                  # v0.6版本开发指导文档
+│   ├── AML_BRD.pdf                # 业务需求文档
+│   ├── src/                       # 源代码目录（待创建）
+│   ├── tests/                     # 测试代码目录（待创建）
+│   ├── docs/                      # 文档目录（待创建）
+│   └── requirements.txt           # 项目依赖（待创建）
 ├── push_script.py                 # Git推送脚本
 ├── gitee_setup_commands.txt       # Gitee仓库设置命令
 ├── .gitignore                     # Git忽略文件配置
@@ -163,7 +160,7 @@ git branch
 ## 开发流程
 
 ### 新功能开发
-1. 分析业务需求文档（v0.5和v0.6目录中的相关文档）
+1. 分析业务需求文档（v0.6目录中的相关文档）
 2. 设计技术方案，确保符合300号文件接口格式
 3. 在v0.6目录中编写代码，遵循中文编码和注释规范
 4. 进行单元测试和集成测试
