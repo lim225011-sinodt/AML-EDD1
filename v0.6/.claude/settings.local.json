@@ -3,7 +3,12 @@
     "allow": [
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(mysql:*)",
+      "Bash(del:*)",
+      "Bash(nul)",
+      "Bash(if exist aml_edd_demo.db del aml_edd_demo.db)"
     ],
     "deny": [],
     "ask": []

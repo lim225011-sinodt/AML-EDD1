@@ -1,0 +1,569 @@
+反洗钱报告300号文件接口
+
+数据建表标准：（MySQL 8.0+，统一 utf8mb4，含中文备注）
+
+说明：主键与唯一性基于“稳定可定位记录”的最小列集设计；未明确的主键我按规范中的“唯一口径”与索引建议推断。
+
+-- 底层参数
+SET NAMES utf8mb4;
+SET sql_mode = 'STRICT_ALL_TABLES';
+
+-- 1) 机构对照表
+CREATE TABLE tb_bank (
+  Head_no       VARCHAR(20)  NOT NULL COMMENT '报告机构编码',
+  Bank_code1    VARCHAR(20)  NOT NULL COMMENT '机构网点代码（PBoC机构网点代码口径）',
+  Bank_code2    VARCHAR(16)  NULL COMMENT '金融机构编码（14位金融标准化编码）',
+  Bank_name     VARCHAR(120) NOT NULL COMMENT '机构名称（与Bank_code1/Bank_code2对应）',
+  Bord_type     CHAR(2)      NOT NULL COMMENT '跨境标识：10境内；11境外',
+  PRIMARY KEY (Bank_code1),
+  UNIQUE KEY uk_tb_bank_code2 (Bank_code2)
+) COMMENT='机构对照表';
+
+-- 2) 业务类型对照表
+CREATE TABLE tb_settle_type (
+  Head_no     VARCHAR(20)  NOT NULL COMMENT '报告机构编码',
+  Settle_type VARCHAR(20)  NOT NULL COMMENT '业务类型编码（系统内数据字典编码）',
+  Name        VARCHAR(100) NOT NULL COMMENT '业务名称（编码对应中文名）',
+  PRIMARY KEY (Settle_type)
+) COMMENT='业务类型对照表';
+
+-- 3) 存量个人客户身份信息
+CREATE TABLE tb_cst_pers (
+  Head_no      VARCHAR(20)  NOT NULL COMMENT '报告机构编码',
+  Bank_code1   VARCHAR(20)  NOT NULL COMMENT '客户号归属机构网点代码，指向tb_bank',
+  Cst_no       VARCHAR(50)  NOT NULL COMMENT '客户号',
+  Open_time    CHAR(8)      NOT NULL COMMENT '创建日期YYYYMMDD',
+  Close_time   CHAR(8)      NULL COMMENT '结束日期YYYYMMDD（销号日）',
+  Acc_name     VARCHAR(40)  NOT NULL COMMENT '客户姓名',
+  Cst_sex      CHAR(2)      NOT NULL COMMENT '性别：11男；12女',
+  Nation       VARCHAR(20)  NOT NULL COMMENT '国籍/地区（GB/T2659-2000缩写）',
+  Id_type      CHAR(2)      NOT NULL COMMENT '证件种类（11身份证…14护照…19其他）',
+  Id_no        VARCHAR(50)  NOT NULL COMMENT '证件号码',
+  Id_deadline  CHAR(8)      NOT NULL COMMENT '证件有效期至（长期99991231）',
+  Occupation   VARCHAR(80)  NULL COMMENT '职业（如使用代码需转文字）',
+  Income       DECIMAL(16,2) NULL COMMENT '年收入（元）',
+  Contact1     VARCHAR(20)  NULL COMMENT '联系方式1（手机或固话）',
+  Contact2     VARCHAR(20)  NULL COMMENT '联系方式2',
+  Contact3     VARCHAR(20)  NULL COMMENT '联系方式3',
+  Address1     VARCHAR(500) NULL COMMENT '住所地/工作单位地址',
+  Address2     VARCHAR(500) NULL COMMENT '其他住所/单位地址1',
+  Address3     VARCHAR(500) NULL COMMENT '其他住所/单位地址2',
+  Company      VARCHAR(120) NULL COMMENT '工作单位名称',
+  Sys_name     VARCHAR(120) NULL COMMENT '采集系统名称（多系统以;分隔）',
+  PRIMARY KEY (Cst_no),
+  KEY idx_cstpers_bank (Bank_code1),
+  KEY idx_cstpers_id (Id_no),
+  KEY idx_cstpers_combo (Id_no, Id_type, Cst_sex),
+  CONSTRAINT fk_cstpers_bank FOREIGN KEY (Bank_code1) REFERENCES tb_bank(Bank_code1)
+) COMMENT='存量个人客户身份信息表';
+
+-- 4) 存量单位客户身份信息（字段结构与个人相似，单位特有字段略不同）
+CREATE TABLE tb_cst_unit (
+  Head_no      VARCHAR(20)  NOT NULL COMMENT '报告机构编码',
+  Bank_code1   VARCHAR(20)  NOT NULL COMMENT '客户号归属机构网点代码，指向tb_bank',
+  Cst_no       VARCHAR(50)  NOT NULL COMMENT '客户号',
+  Open_time    CHAR(8)      NOT NULL COMMENT '创建日期YYYYMMDD',
+  Acc_name     VARCHAR(120) NOT NULL COMMENT '客户名称（单位名称）',
+  Rep_name     VARCHAR(40)  NULL COMMENT '法定代表人/负责人姓名（规范在索引组合中出现）',
+  Ope_name     VARCHAR(40)  NULL COMMENT '授权经办人姓名（规范出现）',
+  License      VARCHAR(50)  NULL COMMENT '单位证照号（交易等表对照“单位客户按License”）',
+  Id_deadline  CHAR(8)      NULL COMMENT '证照有效期至（长期99991231）',
+  Industry     VARCHAR(80)  NULL COMMENT '行业（如代码需转文字）',
+  Reg_amt      DECIMAL(18,2) NULL COMMENT '注册资本金',
+  Reg_amt_code CHAR(3)      NULL COMMENT '注册资本金币种（RMB/USD等国标）',
+  Sys_name     VARCHAR(120) NULL COMMENT '采集系统名称（多系统以;分隔）',
+  PRIMARY KEY (Cst_no),
+  KEY idx_cstunit_bank (Bank_code1),
+  KEY idx_cstunit_combo1 (Rep_name, Cst_no),
+  KEY idx_cstunit_combo2 (Ope_name, Cst_no),
+  KEY idx_cstunit_combo3 (License, Cst_no),
+  CONSTRAINT fk_cstunit_bank FOREIGN KEY (Bank_code1) REFERENCES tb_bank(Bank_code1)
+) COMMENT='存量单位客户身份信息表';
+
+-- 5) 账户主档（检查期内开户/发生交易等账户）
+CREATE TABLE tb_acc (
+  Head_no       VARCHAR(20)  NOT NULL COMMENT '报告机构编码',
+  Bank_code1    VARCHAR(20)  NOT NULL COMMENT '开户行机构网点代码，指向tb_bank',
+  Self_acc_name VARCHAR(120) NOT NULL COMMENT '账户户名（个人/单位）',
+  Acc_state     CHAR(2)      NOT NULL COMMENT '账户状态：11正常；12其他',
+  Self_acc_no   VARCHAR(40)  NOT NULL COMMENT '账号（若仅有卡号则同卡号）',
+  Card_no       VARCHAR(40)  NULL COMMENT '卡号（可1账号多卡，多行表示映射）',
+  Acc_type      CHAR(2)      NOT NULL COMMENT '公私标识：11个人；12单位',
+  Acc_type1     CHAR(2)      NULL COMMENT '个人账户种类：11 I类；12 II类；13 III类；14信用卡',
+  Id_no         VARCHAR(50)  NOT NULL COMMENT '证件号：个人按表3; 单位按表4 License口径',
+  Cst_no        VARCHAR(50)  NOT NULL COMMENT '客户号',
+  Open_time     CHAR(8)      NOT NULL COMMENT '开户日期',
+  Close_time    CHAR(8)      NULL COMMENT '销户日期',
+  Agency_flag   CHAR(2)      NULL COMMENT '开户是否代理：11代理；12本人',
+  Acc_flag      CHAR(2)      NULL COMMENT '账户性质/是否特殊（规范用于索引组合）',
+  Fixed_flag    CHAR(2)      NULL COMMENT '是否定期/冻结标志（用于索引组合）',
+  PRIMARY KEY (Self_acc_no, Card_no),
+  KEY idx_acc_bank (Bank_code1),
+  KEY idx_acc_cst (Cst_no),
+  KEY idx_acc_open1 (Open_time, Acc_type, Cst_no),
+  KEY idx_acc_open2 (Open_time, Acc_type, Id_no),
+  KEY idx_acc_open3 (Open_time, Self_acc_no, Close_time),
+  KEY idx_acc_agency (Open_time, Agency_flag),
+  KEY idx_acc_flag1 (Self_acc_no, Acc_flag),
+  KEY idx_acc_flag2 (Self_acc_no, Fixed_flag),
+  KEY idx_acc_id (Id_no, Self_acc_no),
+  CONSTRAINT fk_acc_bank FOREIGN KEY (Bank_code1) REFERENCES tb_bank(Bank_code1)
+) COMMENT='符合特定条件的银行账户信息表（主档）';
+
+-- 6) 非贷记账户交易（本外币）
+CREATE TABLE tb_acc_txn (
+  Date          CHAR(8)      NOT NULL COMMENT '交易日期YYYYMMDD',
+  Time          CHAR(6)      NOT NULL COMMENT '交易时间HHMMSS',
+  Self_bank_code VARCHAR(20) NOT NULL COMMENT '交易行代码=tb_bank.Bank_code1',
+  Acc_type      CHAR(2)      NOT NULL COMMENT '公私标识：11个人；12单位',
+  Cst_no        VARCHAR(50)  NOT NULL COMMENT '客户号',
+  Id_no         VARCHAR(50)  NOT NULL COMMENT '证件号（个人按表3；单位按表4 License）',
+  Self_acc_no   VARCHAR(40)  NOT NULL COMMENT '我方账号（不能为空）',
+  Card_no       VARCHAR(40)  NULL COMMENT '我方卡号',
+  Part_acc_no   VARCHAR(60)  NULL COMMENT '对手账号/卡号',
+  Part_acc_name VARCHAR(120) NULL COMMENT '对手账户名称',
+  Lend_flag     CHAR(2)      NOT NULL COMMENT '收付标识：10收；11付（客户角度）',
+  Tsf_flag      CHAR(2)      NOT NULL COMMENT '现金/转账：10现金；11转账（客户角度）',
+  Cur           CHAR(3)      NOT NULL COMMENT '币种（GB/T12406-2008）',
+  Org_amt       DECIMAL(16,2) NOT NULL COMMENT '原币种交易金额',
+  Usd_amt       DECIMAL(16,2) NOT NULL COMMENT '折美元交易金额',
+  Rmb_amt       DECIMAL(16,2) NOT NULL COMMENT '折人民币交易金额',
+  Balance       DECIMAL(16,2) NULL COMMENT '交易后账户原币种余额',
+  Agency_flag   CHAR(2)      NULL COMMENT '是否代理：11代理；12本人',
+  Agent_name    VARCHAR(60)  NULL COMMENT '代理人姓名（代理时填）',
+  Agent_tel     VARCHAR(60)  NULL COMMENT '代理人联系方式（代理时填）',
+  Agent_type    CHAR(2)      NULL COMMENT '代理人证件种类（11身份证…）',
+  Agent_no      VARCHAR(50)  NULL COMMENT '代理人证件号码',
+  Reverse_flag  CHAR(2)      NOT NULL COMMENT '冲账标识：10否；11是',
+  Purpose       VARCHAR(120) NULL COMMENT '摘要/用途',
+  Bord_flag     CHAR(2)      NULL COMMENT '跨境标识：11是；12否',
+  Nation        VARCHAR(20)  NULL COMMENT '对方国家/地区（跨境=11时填，GB/T2659-2000）',
+  Bank_flag     CHAR(2)      NULL COMMENT '交易方式：11网银；12手机；13柜面；14ATM；15其他',
+  Ip_code       VARCHAR(17)  NULL COMMENT 'IP地址（网银等口径）',
+  Atm_code      VARCHAR(30)  NULL COMMENT 'ATM机具编号（ATM时）',
+  Bank_code     VARCHAR(20)  NULL COMMENT 'ATM机具所属行行号=tb_bank.Bank_code1',
+  Mac_info      VARCHAR(17)  NULL COMMENT 'MAC/IMEI（PC/移动端）',
+  Settle_type   VARCHAR(20)  NULL COMMENT '业务类型编码（指向tb_settle_type）',
+  Ticd          VARCHAR(40)  NULL COMMENT '业务流水号',
+  PRIMARY KEY (Date, Time, Self_acc_no, Lend_flag, Tsf_flag),
+  KEY idx_txn_bank (Self_bank_code),
+  KEY idx_txn_acc1 (Date, Self_acc_no, Reverse_flag, Tsf_flag, Lend_flag),
+  KEY idx_txn_acc2 (Date, Cst_no,  Reverse_flag, Tsf_flag, Lend_flag),
+  KEY idx_txn_acc3 (Date, Bank_flag, Self_acc_no),
+  KEY idx_txn_acc4 (Date, Acc_type, Self_acc_no),
+  KEY idx_txn_acc5 (Date, Self_acc_no, Part_acc_no),
+  KEY idx_txn_acc6 (Date, Ip_code, Self_acc_no),
+  KEY idx_txn_acc7 (Date, Id_no),
+  CONSTRAINT fk_txn_bank FOREIGN KEY (Self_bank_code) REFERENCES tb_bank(Bank_code1),
+  CONSTRAINT fk_txn_settle FOREIGN KEY (Settle_type) REFERENCES tb_settle_type(Settle_type)
+) COMMENT='基于客户账户的交易数据表（非贷记账户）';
+
+-- 7) 跨境汇款交易
+CREATE TABLE tb_cross_border (
+  Date          CHAR(8)      NOT NULL COMMENT '交易日期',
+  Time          CHAR(6)      NOT NULL COMMENT '交易时间',
+  Lend_flag     CHAR(2)      NOT NULL COMMENT '收付标识：10收；11付（客户角度）',
+  Tsf_flag      CHAR(2)      NOT NULL COMMENT '现金/转账标识：10现金；11转账',
+  Unit_flag     CHAR(2)      NOT NULL COMMENT '公私标识：11个人；12单位（客户）',
+  Cst_no        VARCHAR(50)  NOT NULL COMMENT '客户号',
+  Id_no         VARCHAR(50)  NOT NULL COMMENT '证件号（个人按表3；单位按表4 License）',
+  Self_acc_name VARCHAR(120) NOT NULL COMMENT '客户姓名/名称',
+  Self_acc_no   VARCHAR(60)  NOT NULL COMMENT '客户账号',
+  Card_no       VARCHAR(60)  NULL COMMENT '客户卡号',
+  Self_add      VARCHAR(120) NULL COMMENT '客户联系地址',
+  Ticd          VARCHAR(40)  NULL COMMENT '业务流水号',
+  Part_acc_no   VARCHAR(60)  NULL COMMENT '交易对手账号',
+  Part_acc_name VARCHAR(120) NULL COMMENT '交易对手姓名/名称',
+  Part_nation   VARCHAR(20)  NULL COMMENT '交易对手国家/地区（GB/T2659-2000）',
+  Cur           CHAR(3)      NOT NULL COMMENT '币种（国标）',
+  Org_amt       DECIMAL(16,2) NOT NULL COMMENT '原币种金额',
+  Usd_amt       DECIMAL(16,2) NOT NULL COMMENT '折美元金额',
+  Rmb_amt       DECIMAL(16,2) NOT NULL COMMENT '折人民币金额',
+  Balance       DECIMAL(16,2) NULL COMMENT '交易后原币种余额',
+  Agency_flag   CHAR(2)      NULL COMMENT '是否代理：11代理；12本人',
+  Agent_name    VARCHAR(60)  NULL,
+  Agent_tel     VARCHAR(60)  NULL,
+  Agent_type    CHAR(2)      NULL,
+  Agent_no      VARCHAR(50)  NULL,
+  Settle_type   VARCHAR(20)  NULL COMMENT '业务类型编码（指向tb_settle_type）',
+  Reverse_flag  CHAR(2)      NOT NULL COMMENT '冲账标识：10否；11是',
+  Purpose       VARCHAR(120) NULL COMMENT '摘要/用途',
+  Bord_flag     CHAR(2)      NOT NULL COMMENT '跨境标识：11是；12否',
+  Nation        VARCHAR(20)  NULL COMMENT '对方所在国家/地区（跨境=11时填）',
+  Bank_flag     CHAR(2)      NULL COMMENT '交易方式：11网银；12手机；13柜面；14ATM；15其他',
+  Ip_code       VARCHAR(17)  NULL COMMENT '网银IP',
+  Atm_code      VARCHAR(30)  NULL COMMENT 'ATM机具编号',
+  Bank_code     VARCHAR(20)  NULL COMMENT 'ATM机具所属行号=tb_bank.Bank_code1',
+  Mac_info      VARCHAR(17)  NULL COMMENT 'MAC/IMEI',
+  PRIMARY KEY (Date, Time, Self_acc_no, Lend_flag),
+  KEY idx_cb_id (Date, Id_no),
+  KEY idx_cb_acc (Date, Self_acc_no),
+  CONSTRAINT fk_cb_settle FOREIGN KEY (Settle_type) REFERENCES tb_settle_type(Settle_type)
+) COMMENT='跨境汇款交易数据表';
+
+-- 8) 贷记（信用卡/准贷记卡）交易
+CREATE TABLE tb_cred_txn (
+  Self_acc_no   VARCHAR(40)  NOT NULL COMMENT '账号（信用卡账户）',
+  Card_no       VARCHAR(40)  NOT NULL COMMENT '卡号',
+  Self_acc_name VARCHAR(120) NOT NULL COMMENT '姓名/名称',
+  Cst_no        VARCHAR(50)  NOT NULL COMMENT '客户号',
+  Id_no         VARCHAR(50)  NOT NULL COMMENT '证件号（个人表3；单位表4 License）',
+  Date          CHAR(8)      NOT NULL COMMENT '交易日期',
+  Time          CHAR(6)      NOT NULL COMMENT '交易时间',
+  Lend_flag     CHAR(2)      NOT NULL COMMENT '收付：10收；11付（客户角度）',
+  Tsf_flag      CHAR(2)      NOT NULL COMMENT '现金/转账：10现金；11转账',
+  Cur           CHAR(3)      NOT NULL COMMENT '币种',
+  Org_amt       DECIMAL(16,2) NOT NULL COMMENT '原币种交易金额',
+  Usd_amt       DECIMAL(16,2) NOT NULL COMMENT '折美元交易金额',
+  Rmb_amt       DECIMAL(16,2) NOT NULL COMMENT '折人民币交易金额',
+  Balance       DECIMAL(16,2) NULL COMMENT '溢缴款余额（若有）',
+  Purpose       VARCHAR(120) NULL COMMENT '摘要/用途',
+  Pos_owner     VARCHAR(40)  NULL COMMENT '消费商户名称',
+  Trans_type    CHAR(2)      NULL COMMENT '交易类型：11有卡；12网银；13非网银无卡',
+  Ip_code       VARCHAR(17)  NULL COMMENT '网银IP（非网银无卡时）',
+  Bord_flag     CHAR(2)      NULL COMMENT '跨境标识：11是；12否',
+  Nation        VARCHAR(20)  NULL COMMENT '对方国家/地区（跨境=11时）',
+  PRIMARY KEY (Date, Time, Self_acc_no, Lend_flag),
+  KEY idx_cred_combo1 (Date, Self_acc_no, Lend_flag),
+  KEY idx_cred_combo2 (Date, Id_no, Lend_flag),
+  KEY idx_cred_combo3 (Date, Id_no, Self_acc_no)
+) COMMENT='信用卡/准贷记卡等贷记账户交易';
+
+-- 9) 现金汇款/无卡无折现金存款（非跨境）
+CREATE TABLE tb_cash_remit (
+  Date          CHAR(8)      NOT NULL COMMENT '交易日期',
+  Time          CHAR(6)      NOT NULL COMMENT '交易时间',
+  Self_bank_code VARCHAR(20) NOT NULL COMMENT '交易行代码=tb_bank.Bank_code1',
+  Acc_name      VARCHAR(60)  NOT NULL COMMENT '客户姓名/名称（办理现金业务的客户）',
+  Id_no         VARCHAR(50)  NOT NULL COMMENT '证件号（个人表3；单位表4 License）',
+  Cur           CHAR(3)      NOT NULL COMMENT '币种',
+  Org_amt       DECIMAL(16,2) NOT NULL COMMENT '原币种金额',
+  Usd_amt       DECIMAL(16,2) NOT NULL COMMENT '折美元金额',
+  Rmb_amt       DECIMAL(16,2) NOT NULL COMMENT '折人民币金额',
+  Part_bank     VARCHAR(120) NULL COMMENT '交易对手银行名称',
+  Part_acc_no   VARCHAR(40)  NULL COMMENT '交易对方账号/卡号',
+  Part_acc_name VARCHAR(120) NULL COMMENT '交易对方账户名称',
+  Settle_type   VARCHAR(20)  NULL COMMENT '业务类型（指向tb_settle_type）',
+  Ticd          VARCHAR(40)  NULL COMMENT '业务流水号',
+  PRIMARY KEY (Date, Time, Self_bank_code, Id_no),
+  KEY idx_cr_combo1 (Date, Cur, Id_no),
+  KEY idx_cr_combo2 (Date, Id_no, Part_acc_no),
+  CONSTRAINT fk_cr_bank FOREIGN KEY (Self_bank_code) REFERENCES tb_bank(Bank_code1),
+  CONSTRAINT fk_cr_settle FOREIGN KEY (Settle_type) REFERENCES tb_settle_type(Settle_type)
+) COMMENT='现金汇款/无卡无折现金存款（非跨境）';
+
+-- 10) 现钞结售汇/兑换明细（账户外）
+CREATE TABLE tb_cash_convert (
+  Date        CHAR(8)      NOT NULL COMMENT '交易日期',
+  Time        CHAR(6)      NOT NULL COMMENT '交易时间',
+  Self_bank_code VARCHAR(20) NOT NULL COMMENT '交易行代码=tb_bank.Bank_code1',
+  Acc_name    VARCHAR(60)  NOT NULL COMMENT '客户姓名/名称',
+  Id_no       VARCHAR(50)  NOT NULL COMMENT '证件号（个人表3；单位表4 License）',
+  Out_cur     CHAR(3)      NOT NULL COMMENT '付出币种（国标）',
+  Out_org_amt DECIMAL(16,2) NOT NULL COMMENT '付出原币金额',
+  Out_usd_amt DECIMAL(16,2) NOT NULL COMMENT '付出折美元',
+  In_cur      CHAR(3)      NOT NULL COMMENT '收入币种（国标）',
+  In_org_amt  DECIMAL(16,2) NOT NULL COMMENT '收入原币金额',
+  In_usd_amt  DECIMAL(16,2) NOT NULL COMMENT '收入折美元',
+  Ticd        VARCHAR(40)  NULL COMMENT '业务流水号',
+  Counter_no  VARCHAR(30)  NULL COMMENT '柜员号',
+  Settle_type VARCHAR(20)  NULL COMMENT '业务类型（指向tb_settle_type）',
+  PRIMARY KEY (Date, Time, Self_bank_code, Id_no),
+  KEY idx_cc_combo1 (Date, Id_no),
+  KEY idx_cc_combo2 (Date, Out_cur, Id_no),
+  CONSTRAINT fk_cc_bank FOREIGN KEY (Self_bank_code) REFERENCES tb_bank(Bank_code1),
+  CONSTRAINT fk_cc_settle FOREIGN KEY (Settle_type) REFERENCES tb_settle_type(Settle_type)
+) COMMENT='现钞结售汇/外币现钞兑换（账户外流动）';
+
+-- 11) 历次风险等级划分
+CREATE TABLE tb_risk_his (
+  Bank_code1 VARCHAR(20) NOT NULL COMMENT '机构网点代码=tb_bank.Bank_code1',
+  Cst_no     VARCHAR(50) NOT NULL COMMENT '客户号',
+  Self_acc_name VARCHAR(120) NULL COMMENT '客户名称',
+  Id_no      VARCHAR(50) NOT NULL COMMENT '证件号：个人表3；单位表4 License',
+  Acc_type   CHAR(2)     NOT NULL COMMENT '公私：11个人；12单位',
+  Risk_code  CHAR(2)     NOT NULL COMMENT '风险等级（10高…14低，或按五级扩展）',
+  Time       CHAR(8)     NOT NULL COMMENT '划分日期（若“系统先评再人工确认”，填确认日）',
+  Norm       VARCHAR(500) NULL COMMENT '划分依据/评分分值或评定理由',
+  PRIMARY KEY (Cst_no, Time),
+  KEY idx_riskhis_bank (Bank_code1)
+) COMMENT='检查期内历次风险等级记录';
+
+-- 12) 最新一次风险等级（与his同构，保留“最近”）
+CREATE TABLE tb_risk_new (
+  Bank_code1 VARCHAR(20) NOT NULL COMMENT '机构网点代码=tb_bank.Bank_code1',
+  Cst_no     VARCHAR(50) NOT NULL COMMENT '客户号',
+  Self_acc_name VARCHAR(120) NULL COMMENT '客户名称',
+  Id_no      VARCHAR(50) NOT NULL COMMENT '证件号',
+  Acc_type   CHAR(2)     NOT NULL COMMENT '公私：11个人；12单位',
+  Risk_code  CHAR(2)     NOT NULL COMMENT '风险等级（同口径）',
+  Time       CHAR(8)     NOT NULL COMMENT '最新一次划分日期',
+  Norm       VARCHAR(500) NULL COMMENT '划分依据/理由',
+  PRIMARY KEY (Cst_no),
+  KEY idx_risknew_combo1 (Time, Id_no),
+  KEY idx_risknew_combo2 (Cst_no, Time, Risk_code),
+  CONSTRAINT fk_risknew_bank FOREIGN KEY (Bank_code1) REFERENCES tb_bank(Bank_code1)
+) COMMENT='存量客户最新风险等级划分';
+
+-- 13) 公民联网核查日志
+CREATE TABLE tb_lwhc_log (
+  Bank_name  VARCHAR(120) NOT NULL COMMENT '核查机构名称=tb_bank.Bank_name',
+  Bank_code2 VARCHAR(20)  NOT NULL COMMENT '核查机构网点代码=tb_bank.Bank_code1',
+  Date       CHAR(8)      NOT NULL COMMENT '联网核查日期',
+  Time       CHAR(6)      NOT NULL COMMENT '联网核查时间',
+  Name       VARCHAR(40)  NOT NULL COMMENT '公民姓名',
+  Id_no      VARCHAR(50)  NOT NULL COMMENT '居民身份证号码',
+  Result     CHAR(2)      NOT NULL COMMENT '核查结果（11一致有照…16其他）',
+  Counter_no VARCHAR(30)  NULL COMMENT '柜员号',
+  Ope_line   VARCHAR(40)  NULL COMMENT '业务条线/岗位',
+  Mode       CHAR(2)      NULL COMMENT '核查方式：10机读；11手动',
+  Purpose    VARCHAR(120) NULL COMMENT '摘要/备注',
+  PRIMARY KEY (Date, Time, Id_no),
+  KEY idx_lwhc_combo1 (Id_no, Date),
+  KEY idx_lwhc_combo2 (Id_no, Result)
+) COMMENT='公民联网核查日志记录';
+
+-- 14) 大额交易报告明细（已上报成功口径）
+CREATE TABLE tb_lar_report (
+  -- 依据反洗钱监测分析中心大额数据字典；此处给出公共抬头字段
+  RLFC   CHAR(2)       NOT NULL COMMENT '金融机构与客户关系：00本行账户/卡；01境外卡收单；02非账户业务机构', 
+  ROTF   VARCHAR(64)   NULL COMMENT '交易信息备注（如无填@N）',
+  RPMN   VARCHAR(500)  NULL COMMENT '收付款方匹配号',
+  RPMT   CHAR(2)       NULL COMMENT '收付款方匹配号类型（按监测中心代码表）',
+  -- ……余下字段请按中心“数据报送字典10.x节”扩充
+  PRIMARY KEY (RLFC, RPMN)
+) COMMENT='大额交易报告明细（监测中心数据字典口径）';
+
+
+-- 15) 可疑交易报告明细（已上报成功口径）
+CREATE TABLE tb_sus_report (
+  TBID  VARCHAR(128)  NULL COMMENT '交易代办人证件号码（居民身份证15/18位等口径）',
+  TBIT  CHAR(6)       NULL COMMENT '交易代办人证件类型（10.1节代码表）',
+  TBNM  VARCHAR(128)  NULL COMMENT '交易代办人姓名',
+  TBNT  CHAR(3)       NULL COMMENT '交易代办人国籍（GB/T2659-2000）',
+  TCAC  VARCHAR(64)   NULL COMMENT '交易对手账号',
+  TCAT  CHAR(6)       NULL COMMENT '交易对手账户类型（10.2节）',
+  TCID  VARCHAR(128)  NULL COMMENT '交易对手证件号码（机构9位组织机构代码口径等）',
+  TCIT  CHAR(6)       NULL COMMENT '交易对手证件类型（10.1节）',
+  TCNM  VARCHAR(128)  NULL COMMENT '交易对手姓名/名称',
+  TICD  VARCHAR(256)  NULL COMMENT '业务标识号',
+  TRCD  CHAR(9)       NULL COMMENT '交易发生地（前3位国别/CHN，后6位区县或000000）',
+  PRIMARY KEY (TICD)
+) COMMENT='可疑交易报告明细（监测中心数据字典口径）';
+
+/* ============================================================
+   表间关联“声明版”（SQL 方式表达）
+   说明：
+   1) 先声明可被数据库强约束（FK）的关系；
+   2) 对于监管口径里“条件引用/多来源引用”（如个人用 tb_cst_pers.Id_no、
+      单位用 tb_cst_unit.License）这类无法用单一 FK 强约束的关系，
+      采用“参考视图（Reference Views）”来用 SQL 明确关联口径。
+   3) 假设使用 MySQL 8.0+。
+   ============================================================ */
+
+-- ========== 一、可直接外键强约束的关系 ==========
+
+/* 机构/网点统一口径：Bank_code1 做主键被各表引用 */
+ALTER TABLE tb_cst_pers     ADD CONSTRAINT fk_cstpers_bank  FOREIGN KEY (Bank_code1)      REFERENCES tb_bank(Bank_code1);
+ALTER TABLE tb_cst_unit     ADD CONSTRAINT fk_cstunit_bank  FOREIGN KEY (Bank_code1)      REFERENCES tb_bank(Bank_code1);
+ALTER TABLE tb_acc          ADD CONSTRAINT fk_acc_bank      FOREIGN KEY (Bank_code1)      REFERENCES tb_bank(Bank_code1);
+ALTER TABLE tb_acc_txn      ADD CONSTRAINT fk_txn_bank      FOREIGN KEY (Self_bank_code)  REFERENCES tb_bank(Bank_code1);
+ALTER TABLE tb_cash_remit   ADD CONSTRAINT fk_cr_bank       FOREIGN KEY (Self_bank_code)  REFERENCES tb_bank(Bank_code1);
+ALTER TABLE tb_cash_convert ADD CONSTRAINT fk_cc_bank       FOREIGN KEY (Self_bank_code)  REFERENCES tb_bank(Bank_code1);
+ALTER TABLE tb_risk_his     ADD CONSTRAINT fk_riskhis_bank  FOREIGN KEY (Bank_code1)      REFERENCES tb_bank(Bank_code1);
+ALTER TABLE tb_risk_new     ADD CONSTRAINT fk_risknew_bank  FOREIGN KEY (Bank_code1)      REFERENCES tb_bank(Bank_code1);
+
+/* 业务类型统一口径：Settle_type 指向业务字典 */
+ALTER TABLE tb_acc_txn      ADD CONSTRAINT fk_txn_settle    FOREIGN KEY (Settle_type)     REFERENCES tb_settle_type(Settle_type);
+ALTER TABLE tb_cash_remit   ADD CONSTRAINT fk_cr_settle     FOREIGN KEY (Settle_type)     REFERENCES tb_settle_type(Settle_type);
+ALTER TABLE tb_cash_convert ADD CONSTRAINT fk_cc_settle     FOREIGN KEY (Settle_type)     REFERENCES tb_settle_type(Settle_type);
+ALTER TABLE tb_cross_border ADD CONSTRAINT fk_cb_settle     FOREIGN KEY (Settle_type)     REFERENCES tb_settle_type(Settle_type);
+
+/* 跨境交易中 ATM 机具所属行号引用机构（若列存在且用于 ATM 场景） */
+-- 若 tb_cross_border.Bank_code 存放“ATM 机具所属行号”，可启用如下外键：
+-- ALTER TABLE tb_cross_border ADD CONSTRAINT fk_cb_bank FOREIGN KEY (Bank_code) REFERENCES tb_bank(Bank_code1);
+
+
+
+-- ========== 二、参考视图（表达“口径关联”的声明式 SQL） ==========
+
+/* 2.1 账户主档 ←→ 交易明细（非贷记）
+ * 口径：优先通过账号匹配；若交易记录仅有卡号且账户表存在对应卡号，也可匹配。
+ * 说明：OR 条件无法作为 FK，采用视图表达业务口径。
+ */
+CREATE OR REPLACE VIEW vw_txn_with_acc AS
+SELECT
+    t.*,
+    a.Bank_code1              AS acc_bank_code1,
+    a.Self_acc_name           AS acc_name,
+    a.Acc_type                AS acc_pub_priv,
+    a.Acc_type1               AS acc_personal_type,
+    a.Cst_no                  AS acc_cst_no,
+    a.Id_no                   AS acc_id_no
+FROM tb_acc_txn t
+LEFT JOIN tb_acc a
+  ON  a.Self_acc_no = t.Self_acc_no
+  OR (t.Card_no IS NOT NULL AND a.Card_no = t.Card_no);
+
+/* 2.2 账户主档 ←→ 交易明细（贷记账户）
+ * 口径：信用卡/准贷记卡交易按账号或卡号回溯账户主档。
+ */
+CREATE OR REPLACE VIEW vw_cred_with_acc AS
+SELECT
+    c.*,
+    a.Bank_code1              AS acc_bank_code1,
+    a.Self_acc_name           AS acc_name,
+    a.Acc_type                AS acc_pub_priv,
+    a.Acc_type1               AS acc_personal_type,
+    a.Cst_no                  AS acc_cst_no,
+    a.Id_no                   AS acc_id_no
+FROM tb_cred_txn c
+LEFT JOIN tb_acc a
+  ON  a.Self_acc_no = c.Self_acc_no
+  OR (c.Card_no IS NOT NULL AND a.Card_no = c.Card_no);
+
+/* 2.3 交易 ←→ 客户身份（个人口径）
+ * 口径：Acc_type=11（个人）时，交易记录的 Id_no 匹配个人客户表 tb_cst_pers.Id_no。
+ */
+CREATE OR REPLACE VIEW vw_txn_person_identity AS
+SELECT
+    t.*,
+    p.Cst_no          AS pers_cst_no,
+    p.Acc_name        AS pers_name,
+    p.Cst_sex,
+    p.Nation,
+    p.Id_type,
+    p.Id_deadline
+FROM tb_acc_txn t
+JOIN tb_cst_pers p
+  ON t.Acc_type = '11'      -- 公私标识：11个人
+ AND t.Id_no   = p.Id_no;
+
+/* 2.4 交易 ←→ 客户身份（单位口径）
+ * 口径：Acc_type=12（单位）时，交易记录的 Id_no 与单位客户证照 tb_cst_unit.License 对应。
+ */
+CREATE OR REPLACE VIEW vw_txn_unit_identity AS
+SELECT
+    t.*,
+    u.Cst_no          AS unit_cst_no,
+    u.Acc_name        AS unit_name,
+    u.Rep_name,
+    u.Ope_name,
+    u.License         AS unit_license,
+    u.Id_deadline     AS unit_license_deadline,
+    u.Industry,
+    u.Reg_amt,
+    u.Reg_amt_code
+FROM tb_acc_txn t
+JOIN tb_cst_unit u
+  ON t.Acc_type = '12'     -- 公私标识：12单位
+ AND t.Id_no   = u.License;
+
+/* 2.5 跨境交易 ←→ 客户身份（个人/单位分流） */
+CREATE OR REPLACE VIEW vw_cross_border_with_identity AS
+SELECT
+    cb.*,
+    CASE WHEN cb.Unit_flag='11' THEN p.Cst_no  ELSE u.Cst_no  END AS cst_no_resolved,
+    CASE WHEN cb.Unit_flag='11' THEN p.Acc_name ELSE u.Acc_name END AS name_resolved
+FROM tb_cross_border cb
+LEFT JOIN tb_cst_pers p
+       ON cb.Unit_flag='11' AND cb.Id_no = p.Id_no
+LEFT JOIN tb_cst_unit u
+       ON cb.Unit_flag='12' AND cb.Id_no = u.License;
+
+/* 2.6 现金类（无卡无折/现钞结售汇） ←→ 客户身份（个人/单位分流） */
+CREATE OR REPLACE VIEW vw_cash_remit_with_identity AS
+SELECT
+    cr.*,
+    COALESCE(p.Cst_no, u.Cst_no)   AS cst_no_resolved,
+    COALESCE(p.Acc_name, u.Acc_name) AS name_resolved
+FROM tb_cash_remit cr
+LEFT JOIN tb_cst_pers p ON cr.Id_no = p.Id_no
+LEFT JOIN tb_cst_unit u ON cr.Id_no = u.License;
+
+CREATE OR REPLACE VIEW vw_cash_convert_with_identity AS
+SELECT
+    cc.*,
+    COALESCE(p.Cst_no, u.Cst_no)   AS cst_no_resolved,
+    COALESCE(p.Acc_name, u.Acc_name) AS name_resolved
+FROM tb_cash_convert cc
+LEFT JOIN tb_cst_pers p ON cc.Id_no = p.Id_no
+LEFT JOIN tb_cst_unit u ON cc.Id_no = u.License;
+
+/* 2.7 客户 ←→ 风险等级（最新/历史） */
+CREATE OR REPLACE VIEW vw_customer_risk_new AS
+SELECT
+    cst_no,
+    Id_no,
+    Acc_type,
+    Risk_code,
+    Time AS risk_time
+FROM tb_risk_new;
+
+CREATE OR REPLACE VIEW vw_customer_risk_history AS
+SELECT
+    cst_no,
+    Id_no,
+    Acc_type,
+    Risk_code,
+    Time AS risk_time,
+    Norm
+FROM tb_risk_his;
+
+/* 2.8 联网核查 ←→ 机构
+ * 口径：tb_lwhc_log.Bank_code2（规范口径上的机构网点代码）映射到 tb_bank.Bank_code1。
+ */
+CREATE OR REPLACE VIEW vw_lwhc_with_bank AS
+SELECT
+    l.*,
+    b.Head_no,
+    b.Bank_name
+FROM tb_lwhc_log l
+LEFT JOIN tb_bank b
+  ON l.Bank_code2 = b.Bank_code1;
+
+/* 2.9 上报报文（大额/可疑）与基础口径的轻量桥接
+ * 说明：上报字段集来自监测中心数据字典，通常不直接 FK 到业务库。
+ * 以下视图仅示意与“业务流水号/交易代办/对手”口径的可能映射位。
+ */
+CREATE OR REPLACE VIEW vw_lar_with_txn_hint AS
+SELECT
+    r.*,
+    -- RPMN/RPMT 可作为“客户/对手匹配号”口径的桥接键位（实际对接需按中心字典落地）
+    NULL AS hint_self_acc_no,
+    NULL AS hint_ticd
+FROM tb_lar_report r;
+
+CREATE OR REPLACE VIEW vw_sus_with_txn_hint AS
+SELECT
+    s.*,
+    s.TICD AS hint_ticd  -- 与各交易明细中的业务流水号口径对应（若银行内部贯通）
+FROM tb_sus_report s;
+
+
+
+-- ========== 三、可选的“弱约束”实现（若需要更严格的结构化约束） ==========
+
+/* 3.1 若机构希望“交易 ↔ 账户”能被 FK 强校验，建议在 tb_acc 引入一个稳定的
+ *     surrogate key（如 acc_id BIGINT AUTO_INCREMENT），并在交易表增加 acc_id 外键；
+ *     或者在 tb_acc 上为 Self_acc_no 建唯一索引（仅当一账号唯一、不存在多卡多行）。
+ *     下面示例为“增设唯一账号约束 + 外键”的可选做法（需先清洗数据以满足唯一性）：
+ */
+
+-- -- 可选：仅当确认 Self_acc_no 全库唯一时启用
+-- ALTER TABLE tb_acc ADD UNIQUE KEY uk_acc_self (Self_acc_no);
+
+-- -- 可选：为非贷记交易增加外键到账号（若满足唯一性）
+-- ALTER TABLE tb_acc_txn
+--   ADD CONSTRAINT fk_txn_acc
+--   FOREIGN KEY (Self_acc_no) REFERENCES tb_acc(Self_acc_no);
+
+-- -- 可选：为贷记交易增加外键到账号（若满足唯一性）
+-- ALTER TABLE tb_cred_txn
+--   ADD CONSTRAINT fk_cred_acc
+--   FOREIGN KEY (Self_acc_no) REFERENCES tb_acc(Self_acc_no);
+
+/* 3.2 “个人/单位分流”的严格约束可通过触发器实现（示例略），
+ *     或通过应用层/ETL 保障：Acc_type=11 → Id_no 必须命中 tb_cst_pers.Id_no，
+ *                                Acc_type=12 → Id_no 必须命中 tb_cst_unit.License。
+ */
